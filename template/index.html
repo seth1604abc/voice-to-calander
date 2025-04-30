@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>語音轉文字與Claude對話</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        #recordButton {
+            background-color: #ff4b4b;
+            color: white;
+        }
+        #recordButton.recording {
+            background-color: #960000;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        #sendButton {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #sendButton:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .audio-container {
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            color: #666;
+        }
+        .chat-container {
+            margin-top: 30px;
+            border-top: 1px solid #ddd;
+            padding-top: 20px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #e6f7ff;
+            margin-left: 20px;
+            border-left: 4px solid #1890ff;
+        }
+        .claude-message {
+            background-color: #f6ffed;
+            margin-right: 20px;
+            border-left: 4px solid #52c41a;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        .time-info {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>語音轉文字與Claude對話</h1>
+        
+        <div class="controls">
+            <button id="recordButton">開始錄音</button>
+            <button id="sendButton" disabled>發送到Claude</button>
+        </div>
+        
+        <div class="status" id="status">等待錄音...</div>
+        
+        <div class="audio-container">
+            <audio id="audioPlayback" controls style="display: none;"></audio>
+        </div>
+        
+        <div class="chat-container" id="chatContainer">
+            <div class="message claude-message">
+                您好！我是Claude，請點擊「開始錄音」按鈕開始我們的對話。
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob = null;
+        const recordButton = document.getElementById('recordButton');
+        const sendButton = document.getElementById('sendButton');
+        const status = document.getElementById('status');
+        const audioPlayback = document.getElementById('audioPlayback');
+        const chatContainer = document.getElementById('chatContainer');
+        
+        // 獲取當前時間和時區信息
+        function getTimeInfo() {
+            const now = new Date();
+            
+            // ISO 8601 格式時間
+            const isoTime = now.toISOString();
+            
+            // 獲取時區偏移（格式化為 +08:00 或 -05:00 的形式）
+            const tzOffset = now.getTimezoneOffset();
+            const tzHours = Math.abs(Math.floor(tzOffset / 60));
+            const tzMinutes = Math.abs(tzOffset % 60);
+            const tzSign = tzOffset <= 0 ? '+' : '-';
+            const timezone = `${tzSign}${tzHours.toString().padStart(2, '0')}:${tzMinutes.toString().padStart(2, '0')}`;
+            
+            // 時區名稱 (如 "Asia/Shanghai")
+            const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            
+            return {
+                isoTime: isoTime,
+                timezone: timezone,
+                timezoneName: tzName
+            };
+        }
+        
+        // 請求麥克風訪問權限
+        async function getMedia() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                return stream;
+            } catch (err) {
+                console.error('麥克風訪問失敗:', err);
+                status.textContent = '無法訪問麥克風，請檢查權限設置';
+                return null;
+            }
+        }
+        
+        // 設置錄音器
+        async function setupRecorder() {
+            const stream = await getMedia();
+            if (!stream) return;
+            
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+            
+            mediaRecorder.onstop = () => {
+                audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                audioPlayback.src = audioUrl;
+                audioPlayback.style.display = 'block';
+                
+                status.textContent = '錄音完成，可以播放或發送';
+                sendButton.disabled = false;
+            };
+        }
+        
+        // 開始/停止錄音
+        recordButton.addEventListener('click', async () => {
+            if (!mediaRecorder) {
+                await setupRecorder();
+                if (!mediaRecorder) return;
+            }
+            
+            if (mediaRecorder.state === 'inactive') {
+                // 開始錄音
+                audioChunks = [];
+                mediaRecorder.start();
+                status.textContent = '正在錄音...';
+                recordButton.textContent = '停止錄音';
+                recordButton.classList.add('recording');
+                sendButton.disabled = true;
+                audioPlayback.style.display = 'none';
+            } else {
+                // 停止錄音
+                mediaRecorder.stop();
+                recordButton.textContent = '開始錄音';
+                recordButton.classList.remove('recording');
+            }
+        });
+        
+        // 發送錄音到後端
+        sendButton.addEventListener('click', async () => {
+            if (!audioBlob) {
+                return;
+            }
+            
+            status.textContent = '正在處理...';
+            sendButton.disabled = true;
+            
+            // 獲取時間和時區信息
+            const timeInfo = getTimeInfo();
+            const timestampInSeconds = Math.floor(Date.now() / 1000)
+            
+            // 創建FormData對象
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.wav');
+            formData.append('timestamp', timestampInSeconds);
+            formData.append('timezone', timeInfo.timezone);
+            formData.append('timezoneName', timeInfo.timezoneName);
+            
+            try {
+                // 顯示用戶訊息（音頻轉文字前）
+                const userMessageDiv = document.createElement('div');
+                userMessageDiv.className = 'message user-message';
+                userMessageDiv.innerHTML = '<i>正在處理您的語音訊息...</i>';
+                chatContainer.appendChild(userMessageDiv);
+                
+                // 將時間信息添加到用戶消息中
+                const timeInfoDiv = document.createElement('div');
+                timeInfoDiv.className = 'time-info';
+                timeInfoDiv.textContent = `發送時間: ${new Date().toLocaleString()} (${timeInfo.timezoneName})`;
+                userMessageDiv.appendChild(timeInfoDiv);
+                
+                // 發送到後端API處理
+                const response = await fetch('/chat/voice', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Server responded with an error');
+                }
+                
+                const data = await response.json();
+                
+                // 更新用戶訊息（顯示轉換後的文字）
+                userMessageDiv.innerHTML = data.data;
+                userMessageDiv.appendChild(timeInfoDiv);
+                
+                // 如果後端返回了Claude的回應，顯示它
+                if (data.data) {
+                    const claudeMessageDiv = document.createElement('div');
+                    claudeMessageDiv.className = 'message claude-message';
+                    claudeMessageDiv.textContent = "事件建立成功\n" + data.data;
+                    chatContainer.appendChild(claudeMessageDiv);
+                }
+                
+            } catch (error) {
+                console.error('處理錯誤:', error);
+                status.textContent = '處理失敗: ' + error.message;
+            } finally {
+                sendButton.disabled = false;
+            }
+        });
+        
+        // 頁面加載時初始化
+        window.addEventListener('load', setupRecorder);
+    </script>
+</body>
+</html>
