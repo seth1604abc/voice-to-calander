@@ -33,7 +33,8 @@ async def add_schedule(
     try:
         response = await chat_service.reservation_google_calander(file=audio, timezone=timezoneName, send_timestamp=timestamp)
         return {
-            "data": response["voice_text"]
+            "data": response["voice_text"],
+            "agent_response": response.get("agent_response", "")
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"處理消息時出錯: {str(e)}")

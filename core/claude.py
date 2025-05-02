@@ -18,21 +18,29 @@ class ClaudeClient:
         self.api_key = config["CLAUDE_API_KEY"]
         self.model = "claude-3-5-sonnet-20240620"
 
-        self.client = None
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            base_url="https://api.anthropic.com",
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+        )
         self._initialized = True
 
-    async def ensure_client(self):
-        """確保異步客戶端已初始化"""
-        if self.client is None:
-            self.client = httpx.AsyncClient(
-                timeout=30.0,
-                base_url="https://api.anthropic.com",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                }
-            )
+    # async def ensure_client(self):
+    #     """確保異步客戶端已初始化"""
+    #     if self.client is None:
+    #         self.client = httpx.AsyncClient(
+    #             timeout=30.0,
+    #             base_url="https://api.anthropic.com",
+    #             headers={
+    #                 "x-api-key": self.api_key,
+    #                 "anthropic-version": "2023-06-01",
+    #                 "content-type": "application/json"
+    #             }
+    #         )
 
     async def generate_text(self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7) -> Dict[Any, Any]:
         """
@@ -62,10 +70,10 @@ class ClaudeClient:
         except httpx.HTTPError as e:
             return {"error": str(e)}
         
-    
+# async def get_claude_client() -> ClaudeClient:
+#     client = ClaudeClient()
+#     await client.ensure_client()
+#     return client
 
-        
 async def get_claude_client() -> ClaudeClient:
-    client = ClaudeClient()
-    await client.ensure_client()
-    return client
+    return ClaudeClient()

@@ -269,7 +269,14 @@
                 if (data.data) {
                     const claudeMessageDiv = document.createElement('div');
                     claudeMessageDiv.className = 'message claude-message';
-                    claudeMessageDiv.textContent = "事件建立成功\n" + data.data;
+                    
+                    // 如果有agent_response，顯示它，否則顯示默認消息
+                    if (data.agent_response) {
+                        claudeMessageDiv.textContent = data.agent_response;
+                    } else {
+                        claudeMessageDiv.textContent = "事件建立成功\n" + data.data;
+                    }
+                    
                     chatContainer.appendChild(claudeMessageDiv);
                 }
                 

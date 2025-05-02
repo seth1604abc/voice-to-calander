@@ -2,6 +2,7 @@ from fastapi import HTTPException, UploadFile
 from core import get_claude_client, whisper_model
 from typing import Dict, Any
 from .googlecalander import google_calander_service
+from .langchain_service import langchain_service
 import os
 import aiofiles
 from uuid import uuid4
@@ -15,10 +16,18 @@ class ChatService:
         pass
 
     async def generate_response(self, message: str):
-        claude_client = await get_claude_client()
-        response = await claude_client.generate_text(prompt=message)
-
-        return self.get_content(response=response)
+        """
+        使用LangChain處理消息，利用記憶功能和工具
+        """
+        try:
+            # 使用LangChain處理消息
+            response = await langchain_service.process_message(message)
+            return response
+        except Exception as e:
+            # 如果LangChain失敗，回退到原始Claude實現
+            claude_client = await get_claude_client()
+            response = await claude_client.generate_text(prompt=message)
+            return self.get_content(response=response)
     
     def get_content(self, response: Dict[Any, Any]):
         content = ''
@@ -39,19 +48,62 @@ class ChatService:
         # 使用Whisper進行語音轉文字
         result = whisper_model.transcribe(temp_audio_path)
         transcribed_text = result["text"]
-
-        # 清理臨時文件
-        try:
-            os.remove(temp_audio_path)
-        except Exception as e:
-            print(f"無法刪除臨時文件: {e}")
-            raise HTTPException(status_code=500, detail=f"處理音頻時出錯: {str(e)}")
         
-        return transcribed_text
+        return transcribed_text, temp_audio_path
     
     async def reservation_google_calander(self, file: UploadFile, timezone: str, send_timestamp: int):
-        voice_content = await self.transfer_voice_data(file=file)
-        # print(voice_content)
+        """
+        使用LangChain處理語音預約，利用記憶功能和工具
+        """
+        try:
+            # 保存語音文件並獲取文本
+            voice_content, temp_audio_path = await self.transfer_voice_data(file=file)
+            
+            # 使用LangChain處理語音預約
+            response = await langchain_service.process_audio(
+                transcribed_text=voice_content,
+                timestamp=send_timestamp,
+                timezone=timezone
+            )
+            
+            # 清理臨時文件
+            try:
+                if os.path.exists(temp_audio_path):
+                    os.remove(temp_audio_path)
+            except Exception as e:
+                print(f"無法刪除臨時文件: {e}")
+            
+            # 如果有錯誤，回退到原始實現
+            if "error" in response:
+                return await self._legacy_reservation_google_calander(
+                    voice_content=voice_content,
+                    timezone=timezone,
+                    send_timestamp=send_timestamp
+                )
+            
+            return {
+                "voice_text": response.get("voice_text", voice_content),
+                "agent_response": response.get("agent_response", "")
+            }
+        except Exception as e:
+            # 如果LangChain失敗，回退到原始實現
+            voice_content, temp_audio_path = await self.transfer_voice_data(file=file)
+            
+            # 清理臨時文件
+            try:
+                if os.path.exists(temp_audio_path):
+                    os.remove(temp_audio_path)
+            except Exception as file_e:
+                print(f"無法刪除臨時文件: {file_e}")
+                
+            return await self._legacy_reservation_google_calander(
+                voice_content=voice_content,
+                timezone=timezone,
+                send_timestamp=send_timestamp
+            )
+    
+    async def _legacy_reservation_google_calander(self, voice_content: str, timezone: str, send_timestamp: int):
+        """原始的Google Calendar預約實現，作為備用"""
         prompt = f"""
         當前Timestamp: {send_timestamp}
         當前Timezone: {timezone}
@@ -92,17 +144,11 @@ class ChatService:
         """
 
         response = await self.generate_response(message=prompt)
-        # print(type(response))
-        # print(response)
         event_dict = json.loads(response)
-        # print(event_dict)
         event = google_calander_service.create_event(event_dict)
-        # print(event)
         return {
             "voice_text": voice_content
         }
         
     
 chat_service = ChatService()
-
-    
